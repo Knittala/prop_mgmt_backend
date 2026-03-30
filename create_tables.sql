@@ -4,7 +4,7 @@
 -- Replace `your_dataset` with your actual dataset name
 -- ============================================================
 
-CREATE TABLE IF NOT EXISTS `your_dataset.properties` (
+CREATE TABLE IF NOT EXISTS `nittala-purdue-devops.property_mgmt.properties` (
   property_id   INT64   NOT NULL,
   name          STRING  NOT NULL,
   address       STRING  NOT NULL,
@@ -16,7 +16,7 @@ CREATE TABLE IF NOT EXISTS `your_dataset.properties` (
   monthly_rent  FLOAT64 NOT NULL
 );
 
-CREATE TABLE IF NOT EXISTS `your_dataset.income` (
+CREATE TABLE IF NOT EXISTS `nittala-purdue-devops.property_mgmt.income` (
   income_id   INT64   NOT NULL,
   property_id INT64   NOT NULL,
   amount      FLOAT64 NOT NULL,
@@ -24,7 +24,7 @@ CREATE TABLE IF NOT EXISTS `your_dataset.income` (
   description STRING
 );
 
-CREATE TABLE IF NOT EXISTS `your_dataset.expenses` (
+CREATE TABLE IF NOT EXISTS `nittala-purdue-devops.property_mgmt.expenses` (
   expense_id  INT64   NOT NULL,
   property_id INT64   NOT NULL,
   amount      FLOAT64 NOT NULL,

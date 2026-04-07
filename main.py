@@ -108,7 +108,7 @@ def get_income_records(property_id: int, bq: bigquery.Client = Depends(get_bq_cl
     query = f"""
         SELECT * FROM `{PROJECT_ID}.{DATASET}.income`
         WHERE property_id = @prop_id
-        ORDER BY `date` DESC
+        ORDER BY payment_date DESC
     """
     job_config = bigquery.QueryJobConfig(
         query_parameters=[bigquery.ScalarQueryParameter("prop_id", "INT64", property_id)]
@@ -130,7 +130,7 @@ def create_income(property_id: int, income: IncomeCreate, bq: bigquery.Client = 
             "income_id": str(uuid.uuid4()), 
             "property_id": property_id,
             "amount": data["amount"],
-            "date": str(data["payment_date"]), 
+            "payment_date": str(data["payment_date"]), # <--- Matches BigQuery
             "source": data["source"]
         }
 
@@ -217,8 +217,8 @@ def get_arrears_report(bq: bigquery.Client = Depends(get_bq_client)):
             (p.monthly_rent - IFNULL(SUM(i.amount), 0)) as debt
         FROM `{PROJECT_ID}.{DATASET}.properties` p
         LEFT JOIN `{PROJECT_ID}.{DATASET}.income` i ON p.property_id = i.property_id 
-             AND EXTRACT(MONTH FROM i.`date`) = @m 
-             AND EXTRACT(YEAR FROM i.`date`) = @y
+             AND EXTRACT(MONTH FROM i.payment_date) = @m 
+             AND EXTRACT(YEAR FROM i.payment_date) = @y
         WHERE p.tenant_name IS NOT NULL
         GROUP BY 1, 2, 3, 4 
         HAVING debt > 0

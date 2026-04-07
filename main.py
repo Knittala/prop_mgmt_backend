@@ -1,15 +1,15 @@
 from fastapi import FastAPI, Depends, HTTPException, status
 from google.cloud import bigquery
 from pydantic import BaseModel
-from datetime import date
+from datetime import date, datetime
 from typing import Optional, List
-from datetime import datetime
 import uuid
 import os
 
 app = FastAPI()
 
-#Setting Project ID and Dataset information
+# Setting Project ID and Dataset information
+# Cloud Run will automatically provide the PROJECT_ID if you set it in your deploy command
 PROJECT_ID = os.getenv("PROJECT_ID", "nittala-purdue-devops") 
 DATASET = "property_mgmt"
 
@@ -25,7 +25,27 @@ def get_bq_client():
         client.close()
 
 # ---------------------------------------------------------------------------
-# Properties
+# Models (Pydantic)
+# ---------------------------------------------------------------------------
+
+class IncomeCreate(BaseModel):
+    amount: float
+    source: str
+    payment_date: date
+
+class ExpenseCreate(BaseModel):
+    amount: float
+    category: str
+    description: str
+    expense_date: date
+
+class PropertyUpdate(BaseModel):
+    name: Optional[str] = None
+    tenant_name: Optional[str] = None
+    monthly_rent: Optional[float] = None
+
+# ---------------------------------------------------------------------------
+# Properties Endpoints
 # ---------------------------------------------------------------------------
 
 @app.get("/properties")
@@ -58,12 +78,33 @@ def get_property(property_id: int, bq: bigquery.Client = Depends(get_bq_client))
         if isinstance(e, HTTPException): raise e
         raise HTTPException(status_code=500, detail=str(e))
 
+@app.patch("/properties/{property_id}")
+def update_property(property_id: int, updates: PropertyUpdate, bq: bigquery.Client = Depends(get_bq_client)):
+    update_data = updates.dict(exclude_unset=True)
+    if not update_data:
+        raise HTTPException(status_code=400, detail="No fields provided for update")
+
+    set_clause = ", ".join([f"{key} = @{key}" for key in update_data.keys()])
+    query = f"UPDATE `{PROJECT_ID}.{DATASET}.properties` SET {set_clause} WHERE property_id = @prop_id"
+    
+    query_params = [bigquery.ScalarQueryParameter("prop_id", "INT64", property_id)]
+    for key, value in update_data.items():
+        p_type = "FLOAT64" if isinstance(value, float) else "STRING"
+        query_params.append(bigquery.ScalarQueryParameter(key, p_type, value))
+
+    try:
+        bq.query(query, job_config=bigquery.QueryJobConfig(query_parameters=query_params)).result()
+        return {"message": f"Property {property_id} updated", "fields": list(update_data.keys())}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
 # ---------------------------------------------------------------------------
-# Income
+# Income Endpoints
 # ---------------------------------------------------------------------------
 
 @app.get("/income/{property_id}")
 def get_income_records(property_id: int, bq: bigquery.Client = Depends(get_bq_client)):
+    # Using backticks around `date` because it is a reserved SQL keyword
     query = f"""
         SELECT * FROM `{PROJECT_ID}.{DATASET}.income`
         WHERE property_id = @prop_id
@@ -78,51 +119,34 @@ def get_income_records(property_id: int, bq: bigquery.Client = Depends(get_bq_cl
     except Exception as e:
         raise HTTPException(status_code=500, detail="Failed to fetch income records")
 
-class IncomeCreate(BaseModel):
-    amount: float
-    source: str
-    payment_date: date
-
 @app.post("/income/{property_id}")
-def create_income(property_id: int, income: Income, bq: bigquery.Client = Depends(get_bq_client)):
+def create_income(property_id: int, income: IncomeCreate, bq: bigquery.Client = Depends(get_bq_client)):
     try:
-        # 1. Convert Pydantic model to a clean dictionary
-        # Use .dict() or .model_dump() depending on your pydantic version
         data = income.dict()
         
-        # 2. Build the row to match your BigQuery table exactly
-        # Ensure these keys match your BigQuery COLUMN NAMES
+        # Build row to match BigQuery schema exactly. 
+        # Using "date" as the key to match your BigQuery column name.
         row_to_insert = {
+            "income_id": str(uuid.uuid4()), 
             "property_id": property_id,
             "amount": data["amount"],
-            "payment_date": str(data["payment_date"]), # MUST be a string for JSON insert
+            "date": str(data["payment_date"]), 
             "source": data["source"]
         }
 
         table_id = f"{PROJECT_ID}.{DATASET}.income"
-        
-        # 3. Insert into BigQuery
         errors = bq.insert_rows_json(table_id, [row_to_insert])
         
         if errors:
-            # If BigQuery rejects it, this will show us WHY in the API response
             raise HTTPException(status_code=400, detail=f"BigQuery Insert Error: {errors}")
             
         return {"status": "success", "data_logged": row_to_insert}
-
     except Exception as e:
-        # This catches any Python crashes and tells you the line and reason
         raise HTTPException(status_code=500, detail=f"Python Crash: {str(e)}")
 
 # ---------------------------------------------------------------------------
-# Expenses
+# Expenses Endpoints
 # ---------------------------------------------------------------------------
-
-class ExpenseCreate(BaseModel):
-    amount: float
-    category: str
-    description: str
-    expense_date: date
 
 @app.get("/expenses/{property_id}")
 def get_expenses(property_id: int, bq: bigquery.Client = Depends(get_bq_client)):
@@ -154,38 +178,6 @@ def create_expense(property_id: int, expense: ExpenseCreate, bq: bigquery.Client
         raise HTTPException(status_code=500, detail=f"Insert failed: {errors}")
     return {"status": "success", "expense_id": generated_id, "data": new_row[0]}
 
-# ---------------------------------------------------------------------------
-# Custom Endpoints
-# ---------------------------------------------------------------------------
-
-# 1. Properties - Partial Updates (Tenant/Rent/Name)
-class PropertyUpdate(BaseModel):
-    name: Optional[str] = None
-    tenant_name: Optional[str] = None
-    monthly_rent: Optional[float] = None
-
-@app.patch("/properties/{property_id}")
-def update_property(property_id: int, updates: PropertyUpdate, bq: bigquery.Client = Depends(get_bq_client)):
-    update_data = updates.dict(exclude_unset=True)
-    if not update_data:
-        raise HTTPException(status_code=400, detail="No fields provided for update")
-
-    set_clause = ", ".join([f"{key} = @{key}" for key in update_data.keys()])
-    query = f"UPDATE `{PROJECT_ID}.{DATASET}.properties` SET {set_clause} WHERE property_id = @prop_id"
-    
-    query_params = [bigquery.ScalarQueryParameter("prop_id", "INT64", property_id)]
-    for key, value in update_data.items():
-        p_type = "FLOAT64" if isinstance(value, float) else "STRING"
-        query_params.append(bigquery.ScalarQueryParameter(key, p_type, value))
-
-    try:
-        bq.query(query, job_config=bigquery.QueryJobConfig(query_parameters=query_params)).result()
-        return {"message": f"Property {property_id} updated", "fields": list(update_data.keys())}
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
-
-
-# 2. Expenses - Mark as Paid
 @app.patch("/expenses/{expense_id}/pay")
 def mark_expense_paid(expense_id: str, bq: bigquery.Client = Depends(get_bq_client)):
     query = f"UPDATE `{PROJECT_ID}.{DATASET}.expenses` SET status = 'Paid' WHERE expense_id = @exp_id"
@@ -198,8 +190,10 @@ def mark_expense_paid(expense_id: str, bq: bigquery.Client = Depends(get_bq_clie
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
+# ---------------------------------------------------------------------------
+# Analytics Endpoints
+# ---------------------------------------------------------------------------
 
-# 3. Properties - Occupancy/Finding Vacant Units
 @app.get("/occupancy/vacant")
 def get_vacant_properties(bq: bigquery.Client = Depends(get_bq_client)):
     query = f"""
@@ -212,11 +206,10 @@ def get_vacant_properties(bq: bigquery.Client = Depends(get_bq_client)):
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
-
-# 4. Income - Debt Report
 @app.get("/income/status/arrears")
 def get_arrears_report(bq: bigquery.Client = Depends(get_bq_client)):
     now = datetime.now()
+    # Note: using i.`date` to match your BigQuery column name
     query = f"""
         SELECT 
             p.property_id, p.name, p.tenant_name, p.monthly_rent,
@@ -224,8 +217,8 @@ def get_arrears_report(bq: bigquery.Client = Depends(get_bq_client)):
             (p.monthly_rent - IFNULL(SUM(i.amount), 0)) as debt
         FROM `{PROJECT_ID}.{DATASET}.properties` p
         LEFT JOIN `{PROJECT_ID}.{DATASET}.income` i ON p.property_id = i.property_id 
-             AND EXTRACT(MONTH FROM i.payment_date) = @m 
-             AND EXTRACT(YEAR FROM i.payment_date) = @y
+             AND EXTRACT(MONTH FROM i.`date`) = @m 
+             AND EXTRACT(YEAR FROM i.`date`) = @y
         WHERE p.tenant_name IS NOT NULL
         GROUP BY 1, 2, 3, 4 
         HAVING debt > 0
@@ -239,3 +232,13 @@ def get_arrears_report(bq: bigquery.Client = Depends(get_bq_client)):
         return [dict(row) for row in results]
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+# ---------------------------------------------------------------------------
+# Server Startup
+# ---------------------------------------------------------------------------
+
+if __name__ == "__main__":
+    import uvicorn
+    # This port logic is mandatory for Cloud Run
+    port = int(os.environ.get("PORT", 8080))
+    uvicorn.run(app, host="0.0.0.0", port=port)

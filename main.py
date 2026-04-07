@@ -83,19 +83,36 @@ class IncomeCreate(BaseModel):
     source: str
     payment_date: date
 
-@app.post("/income/{property_id}", status_code=status.HTTP_201_CREATED)
-def create_income_record(property_id: int, income: IncomeCreate, bq: bigquery.Client = Depends(get_bq_client)):
-    table_id = f"{PROJECT_ID}.{DATASET}.income"
-    row_to_insert = [{
-        "property_id": property_id,
-        "amount": income.amount,
-        "source": income.source,
-        "payment_date": str(income.payment_date)
-    }]
-    errors = bq.insert_rows_json(table_id, row_to_insert)
-    if errors:
-        raise HTTPException(status_code=500, detail=f"Failed to insert record: {errors}")
-    return {"message": "Income record created successfully", "data": row_to_insert[0]}
+@app.post("/income/{property_id}")
+def create_income(property_id: int, income: Income, bq: bigquery.Client = Depends(get_bq_client)):
+    try:
+        # 1. Convert Pydantic model to a clean dictionary
+        # Use .dict() or .model_dump() depending on your pydantic version
+        data = income.dict()
+        
+        # 2. Build the row to match your BigQuery table exactly
+        # Ensure these keys match your BigQuery COLUMN NAMES
+        row_to_insert = {
+            "property_id": property_id,
+            "amount": data["amount"],
+            "payment_date": str(data["payment_date"]), # MUST be a string for JSON insert
+            "source": data["source"]
+        }
+
+        table_id = f"{PROJECT_ID}.{DATASET}.income"
+        
+        # 3. Insert into BigQuery
+        errors = bq.insert_rows_json(table_id, [row_to_insert])
+        
+        if errors:
+            # If BigQuery rejects it, this will show us WHY in the API response
+            raise HTTPException(status_code=400, detail=f"BigQuery Insert Error: {errors}")
+            
+        return {"status": "success", "data_logged": row_to_insert}
+
+    except Exception as e:
+        # This catches any Python crashes and tells you the line and reason
+        raise HTTPException(status_code=500, detail=f"Python Crash: {str(e)}")
 
 # ---------------------------------------------------------------------------
 # Expenses

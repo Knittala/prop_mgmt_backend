@@ -1,4 +1,5 @@
 from fastapi import FastAPI, Depends, HTTPException, status
+from fastapi.middleware.cors import CORSMiddleware
 from google.cloud import bigquery
 from pydantic import BaseModel
 from datetime import date, datetime
@@ -7,6 +8,14 @@ import uuid
 import os
 
 app = FastAPI()
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=False,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 PROJECT_ID = os.getenv("PROJECT_ID", "nittala-purdue-devops")
 DATASET = "property_mgmt"

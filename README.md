@@ -287,3 +287,42 @@ Now that your service exists in Cloud Run, assign it the service account that ha
 Your backend is live. The `/properties` endpoint is your starting point — refer to the assignment instructions in Brightspace (IA 9) for the full list of endpoints you are responsible for building.
 
 The interactive API documentation is available at `/docs` on both your local server and your deployed Cloud Run URL. Use it to explore and test your endpoints as you build them.
+
+---
+
+## Vue Frontend (Cloud Run)
+
+This repository now includes a Vue front-end in `frontend/` that calls the backend API and supports:
+
+- listing properties, income, expenses, vacant properties, and arrears
+- handling empty API responses gracefully (empty states instead of crashes)
+- showing action feedback for forms (success and error messages)
+
+### Run frontend locally
+
+```bash
+cd frontend
+npm install
+npm run dev
+```
+
+The app targets this API by default:
+
+`https://prop-mgmt-api-315889448859.us-central1.run.app`
+
+You can override it with:
+
+```bash
+VITE_API_BASE_URL=https://your-api-url npm run dev
+```
+
+### Deploy frontend to Google Cloud Run
+
+From the `frontend/` directory:
+
+```bash
+gcloud run deploy prop-mgmt-frontend \
+  --source . \
+  --region us-central1 \
+  --allow-unauthenticated
+```

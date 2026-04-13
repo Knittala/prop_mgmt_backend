@@ -50,10 +50,6 @@ class PropertyUpdate(BaseModel):
     name: Optional[str] = None
     tenant_name: Optional[str] = None
     monthly_rent: Optional[float] = None
-    address: Optional[str] = None
-    city: Optional[str] = None
-    state: Optional[str] = None
-    postal_code: Optional[str] = None
 
 class PropertyCreate(BaseModel):
     name: str
@@ -142,6 +138,18 @@ def update_property(property_id: int, updates: PropertyUpdate, bq: bigquery.Clie
     try:
         bq.query(query, job_config=bigquery.QueryJobConfig(query_parameters=query_params)).result()
         return {"message": f"Property {property_id} updated", "fields": list(update_data.keys())}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.delete("/properties/{property_id}", status_code=status.HTTP_200_OK)
+def delete_property(property_id: int, bq: bigquery.Client = Depends(get_bq_client)):
+    query = f"DELETE FROM `{PROJECT_ID}.{DATASET}.properties` WHERE property_id = @prop_id"
+    job_config = bigquery.QueryJobConfig(
+        query_parameters=[bigquery.ScalarQueryParameter("prop_id", "INT64", property_id)]
+    )
+    try:
+        bq.query(query, job_config=job_config).result()
+        return {"message": f"Property {property_id} deleted successfully"}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 

@@ -50,6 +50,10 @@ class PropertyUpdate(BaseModel):
     name: Optional[str] = None
     tenant_name: Optional[str] = None
     monthly_rent: Optional[float] = None
+    address: Optional[str] = None
+    city: Optional[str] = None
+    state: Optional[str] = None
+    postal_code: Optional[str] = None
 
 class PropertyCreate(BaseModel):
     name: str

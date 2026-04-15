@@ -6,6 +6,8 @@ from datetime import date, datetime
 from typing import Optional, List
 import uuid
 import os
+import json
+import io
 
 app = FastAPI()
 
@@ -30,6 +32,26 @@ def get_bq_client():
         yield client
     finally:
         client.close()
+
+# ---------------------------------------------------------------------------
+# Helper: load job insert (avoids streaming buffer)
+# ---------------------------------------------------------------------------
+
+def load_rows(bq, table_id, rows):
+    job_config = bigquery.LoadJobConfig(
+        source_format=bigquery.SourceFormat.NEWLINE_DELIMITED_JSON,
+        write_disposition=bigquery.WriteDisposition.WRITE_APPEND,
+        autodetect=False,
+    )
+    data = "\n".join(json.dumps(row, default=str) for row in rows)
+    job = bq.load_table_from_file(
+        io.StringIO(data),
+        table_id,
+        job_config=job_config,
+    )
+    job.result()
+    if job.errors:
+        raise Exception(f"Load job failed: {job.errors}")
 
 # ---------------------------------------------------------------------------
 # Models (Pydantic)
@@ -100,9 +122,10 @@ def create_property(prop: PropertyCreate, bq: bigquery.Client = Depends(get_bq_c
         "tenant_name": prop.tenant_name,
         "monthly_rent": prop.monthly_rent,
     }]
-    errors = bq.insert_rows_json(table_id, new_row)
-    if errors:
-        raise HTTPException(status_code=500, detail=f"Insert failed: {errors}")
+    try:
+        load_rows(bq, table_id, new_row)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Insert failed: {str(e)}")
     return {"status": "success", "property_id": new_id, "data": new_row[0]}
 
 @app.get("/properties/{property_id}")
@@ -213,9 +236,7 @@ def create_income(property_id: int, income: IncomeCreate, bq: bigquery.Client = 
             "source": data["source"]
         }
         table_id = f"{PROJECT_ID}.{DATASET}.income"
-        errors = bq.insert_rows_json(table_id, [row_to_insert])
-        if errors:
-            raise HTTPException(status_code=400, detail=f"BigQuery Insert Error: {errors}")
+        load_rows(bq, table_id, [row_to_insert])
         return {"status": "success", "data_logged": row_to_insert}
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Python Crash: {str(e)}")
@@ -249,9 +270,10 @@ def create_expense(property_id: int, expense: ExpenseCreate, bq: bigquery.Client
         "expense_date": str(expense.expense_date),
         "status": "Pending"
     }]
-    errors = bq.insert_rows_json(table_id, new_row)
-    if errors:
-        raise HTTPException(status_code=500, detail=f"Insert failed: {errors}")
+    try:
+        load_rows(bq, table_id, new_row)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Insert failed: {str(e)}")
     return {"status": "success", "expense_id": generated_id, "data": new_row[0]}
 
 @app.patch("/expenses/{expense_id}/pay")
